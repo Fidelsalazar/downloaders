@@ -1,0 +1,182 @@
+name: Download Maven Dependencies
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifacts:
+        description: 'Maven artifacts (format: groupId:artifactId:version, separated by commas)'
+        required: true
+        default: 'com.oracle.database.jdbc:ojdbc8:LATEST'
+        type: string
+      output_directory:
+        description: 'Output directory for downloaded JARs'
+        required: false
+        default: 'plugins'
+        type: string
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  download-dependencies:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        
+    - name: Create output directory
+      run: |
+        mkdir -p ${{ github.event.inputs.output_directory || 'plugins' }}
+        
+    - name: Download Maven Dependencies
+      run: |
+        #!/bin/bash
+        set -e
+        
+        OUTPUT_DIR="${{ github.event.inputs.output_directory || 'plugins' }}"
+        ARTIFACTS="${{ github.event.inputs.artifacts || 'com.oracle.database.jdbc:ojdbc8:LATEST' }}"
+        
+        echo "📦 Downloading Maven dependencies to: $OUTPUT_DIR"
+        echo "🎯 Artifacts: $ARTIFACTS"
+        
+        # Function to get latest version from Maven Central
+        get_latest_version() {
+          local group_id=$1
+          local artifact_id=$2
+          
+          echo "🔍 Getting latest version for $group_id:$artifact_id"
+          
+          # Replace dots with slashes for Maven Central API
+          local group_path=$(echo $group_id | tr '.' '/')
+          
+          # Get metadata from Maven Central
+          local metadata_url="https://repo1.maven.org/maven2/$group_path/$artifact_id/maven-metadata.xml"
+          
+          echo "📡 Fetching metadata from: $metadata_url"
+          
+          # Download metadata and extract latest version
+          local latest_version=$(curl -s "$metadata_url" | grep -oP '<latest>\K[^<]+' || echo "")
+          
+          if [ -z "$latest_version" ]; then
+            # Fallback: get versioning/latest
+            latest_version=$(curl -s "$metadata_url" | grep -oP '<version>\K[^<]+' | tail -1)
+          fi
+          
+          if [ -z "$latest_version" ]; then
+            echo "❌ Could not determine latest version for $group_id:$artifact_id"
+            return 1
+          fi
+          
+          echo "✅ Latest version: $latest_version"
+          echo "$latest_version"
+        }
+        
+        # Function to download artifact
+        download_artifact() {
+          local group_id=$1
+          local artifact_id=$2
+          local version=$3
+          
+          if [ "$version" = "LATEST" ]; then
+            version=$(get_latest_version "$group_id" "$artifact_id")
+            if [ $? -ne 0 ]; then
+              return 1
+            fi
+          fi
+          
+          echo "⬇️ Downloading $group_id:$artifact_id:$version"
+          
+          # Replace dots with slashes for Maven Central path
+          local group_path=$(echo $group_id | tr '.' '/')
+          
+          # Construct download URL
+          local jar_url="https://repo1.maven.org/maven2/$group_path/$artifact_id/$version/$artifact_id-$version.jar"
+          local output_file="$OUTPUT_DIR/$artifact_id-$version.jar"
+          
+          echo "🌐 URL: $jar_url"
+          echo "📁 Output: $output_file"
+          
+          # Download the JAR
+          if curl -L -f -o "$output_file" "$jar_url"; then
+            echo "✅ Successfully downloaded: $output_file"
+            
+            # Verify the download
+            if [ -f "$output_file" ] && [ -s "$output_file" ]; then
+              local file_size=$(stat -c%s "$output_file" 2>/dev/null || stat -f%z "$output_file" 2>/dev/null || echo "unknown")
+              echo "📊 File size: $file_size bytes"
+              
+              # Create symlink without version for easier reference
+              local symlink_name="$OUTPUT_DIR/$artifact_id.jar"
+              ln -sf "$(basename "$output_file")" "$symlink_name"
+              echo "🔗 Created symlink: $symlink_name"
+            else
+              echo "❌ Downloaded file is empty or doesn't exist"
+              return 1
+            fi
+          else
+            echo "❌ Failed to download $jar_url"
+            return 1
+          fi
+        }
+        
+        # Process each artifact
+        IFS=',' read -ra ARTIFACT_ARRAY <<< "$ARTIFACTS"
+        for artifact in "${ARTIFACT_ARRAY[@]}"; do
+          # Trim whitespace
+          artifact=$(echo "$artifact" | xargs)
+          
+          echo "🎯 Processing artifact: $artifact"
+          
+          # Parse groupId:artifactId:version
+          IFS=':' read -ra PARTS <<< "$artifact"
+          
+          if [ ${#PARTS[@]} -lt 2 ]; then
+            echo "❌ Invalid artifact format: $artifact (expected groupId:artifactId[:version])"
+            continue
+          fi
+          
+          group_id="${PARTS[0]}"
+          artifact_id="${PARTS[1]}"
+          version="${PARTS[2]:-LATEST}"
+          
+          echo "📋 Group ID: $group_id"
+          echo "📋 Artifact ID: $artifact_id"
+          echo "📋 Version: $version"
+          
+          download_artifact "$group_id" "$artifact_id" "$version"
+          
+          echo "---"
+        done
+        
+        echo "🎉 Download process completed!"
+        echo "📁 Contents of $OUTPUT_DIR:"
+        ls -la "$OUTPUT_DIR/"
+
+    - name: List downloaded files
+      run: |
+        echo "📦 Downloaded dependencies:"
+        find ${{ github.event.inputs.output_directory || 'plugins' }} -name "*.jar" -exec ls -lh {} \;
+        
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: maven-dependencies
+        path: ${{ github.event.inputs.output_directory || 'plugins' }}/*.jar
+        retention-days: 30
+        
+    - name: Commit downloaded files (optional)
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add ${{ github.event.inputs.output_directory || 'plugins' }}/*.jar || true
+        git commit -m "📦 Update Maven dependencies" || exit 0
+        git push || true
