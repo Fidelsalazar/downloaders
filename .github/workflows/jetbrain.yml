@@ -1,25 +1,25 @@
-name: Download JetBrains Plugin
+name: Download JetBrains Plugin from Direct Link
 
 on:
   workflow_dispatch:
     inputs:
-      plugin_id:
-        description: 'ID del plugin en JetBrains Marketplace (ej. 6317 para Lombok)'
+      download_url:
+        description: 'Enlace directo de descarga del plugin (.zip)'
         required: true
-        default: '6317'
+        default: 'https://plugins.jetbrains.com/plugin/download?rel=true&updateId=...'
       plugin_name:
-        description: 'Nombre amigable del plugin (para el archivo, ej. lombok-plugin)'
+        description: 'Nombre amigable para el archivo (ej. my-plugin)'
         required: true
-        default: 'lombok-plugin'
+        default: 'jetbrains-plugin'
 
 jobs:
   download-plugin:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Mostrar información del plugin
+      - name: Mostrar información de descarga
         run: |
-          echo "Descargando plugin con ID: ${{ github.event.inputs.plugin_id }}"
+          echo "Descargando plugin desde: ${{ github.event.inputs.download_url }}"
           echo "Nombre del plugin: ${{ github.event.inputs.plugin_name }}"
 
       - name: Crear nombre de archivo seguro
@@ -30,22 +30,30 @@ jobs:
           echo "filename=$FILE_NAME" >> $GITHUB_OUTPUT
           echo "base_name=$SAFE_NAME" >> $GITHUB_OUTPUT
 
-      - name: Descargar plugin desde JetBrains Marketplace
+      - name: Descargar plugin desde enlace directo
         run: |
-          PLUGIN_ID='${{ github.event.inputs.plugin_id }}'
+          DOWNLOAD_URL='${{ github.event.inputs.download_url }}'
           OUTPUT_FILE='${{ steps.filename.outputs.filename }}'
-          DOWNLOAD_URL="https://plugins.jetbrains.com/pluginManager/?action=download&id=$PLUGIN_ID&uuid=$(date +%s)"
-
+          
           echo "Descargando desde: $DOWNLOAD_URL"
           curl -L -o "$OUTPUT_FILE" "$DOWNLOAD_URL" --fail
 
           if [ $? -ne 0 ]; then
-            echo "❌ Falló la descarga del plugin ID $PLUGIN_ID"
+            echo "❌ Falló la descarga del plugin desde $DOWNLOAD_URL"
             exit 1
           fi
 
           echo "✅ Plugin descargado como $OUTPUT_FILE"
           ls -lh "$OUTPUT_FILE"
+
+      - name: Verificar que es un archivo ZIP válido
+        run: |
+          FILE='${{ steps.filename.outputs.filename }}'
+          if ! unzip -t "$FILE" > /dev/null 2>&1; then
+            echo "❌ El archivo descargado no es un ZIP válido"
+            exit 1
+          fi
+          echo "✅ El archivo es un ZIP válido"
 
       - name: Subir plugin como artefacto
         uses: actions/upload-artifact@v4
