@@ -1,4 +1,4 @@
-name: Download JetBrains Plugin Direct
+name: Download JetBrains Plugin from Direct Link
 
 on:
   workflow_dispatch:
@@ -6,11 +6,11 @@ on:
       download_url:
         description: 'Enlace directo de descarga del plugin (.zip)'
         required: true
-        default: 'https://plugins.jetbrains.com/files/17215/456789/kafka-plugin.zip'
+        default: 'https://plugins.jetbrains.com/plugin/download?rel=true&updateId=...'
       plugin_name:
-        description: 'Nombre amigable para el archivo (ej. kafka-plugin)'
+        description: 'Nombre amigable para el archivo (ej. my-plugin)'
         required: true
-        default: 'kafka-plugin'
+        default: 'jetbrains-plugin'
 
 jobs:
   download-plugin:
@@ -26,7 +26,7 @@ jobs:
         id: filename
         run: |
           SAFE_NAME=$(echo "${{ github.event.inputs.plugin_name }}" | sed 's/[^a-zA-Z0-9_-]/_/g')
-          FILE_NAME="${SAFE_NAME}.jar"
+          FILE_NAME="${SAFE_NAME}.zip"
           echo "filename=$FILE_NAME" >> $GITHUB_OUTPUT
           echo "base_name=$SAFE_NAME" >> $GITHUB_OUTPUT
 
@@ -36,7 +36,7 @@ jobs:
           OUTPUT_FILE='${{ steps.filename.outputs.filename }}'
           
           echo "Descargando desde: $DOWNLOAD_URL"
-          curl -L -H "User-Agent: Mozilla/5.0 (compatible; IntelliJ IDEA)" -o "$OUTPUT_FILE" "$DOWNLOAD_URL" --fail
+          curl -L -o "$OUTPUT_FILE" "$DOWNLOAD_URL" --fail
 
           if [ $? -ne 0 ]; then
             echo "❌ Falló la descarga del plugin desde $DOWNLOAD_URL"
@@ -46,45 +46,14 @@ jobs:
           echo "✅ Plugin descargado como $OUTPUT_FILE"
           ls -lh "$OUTPUT_FILE"
 
-      - name: Verificar que es un archivo JAR válido
+      - name: Verificar que es un archivo ZIP válido
         run: |
           FILE='${{ steps.filename.outputs.filename }}'
-          
-          # Verificar que no esté vacío
-          if [ ! -s "$FILE" ]; then
-            echo "❌ El archivo descargado está vacío"
+          if ! unzip -t "$FILE" > /dev/null 2>&1; then
+            echo "❌ El archivo descargado no es un ZIP válido"
             exit 1
           fi
-          
-          # Verificar magic number de JAR (ZIP)
-          if ! head -c 4 "$FILE" | xxd -p | grep -q "^504b0304"; then
-            echo "❌ El archivo no es un JAR/ZIP válido"
-            echo "Primeros bytes:"
-            head -c 20 "$FILE" | xxd -p
-            # Mostrar contenido si parece texto
-            head -c 100 "$FILE" | cat -A || true
-            exit 1
-          fi
-          
-          echo "✅ El archivo es un JAR válido"
-          
-          # Listar contenido básico
-          echo "Contenido principal del JAR:"
-          unzip -l "$FILE" | grep -E "(plugin\.xml|META-INF)" | head -10 || true
-
-      - name: Validar estructura de plugin
-        run: |
-          FILE='${{ steps.filename.outputs.filename }}'
-          
-          # Verificar que contiene plugin.xml
-          if ! unzip -l "$FILE" | grep -q "META-INF/plugin.xml"; then
-            echo "❌ No se encontró META-INF/plugin.xml en el JAR"
-            echo "Contenido del JAR:"
-            unzip -l "$FILE" | head -20
-            exit 1
-          fi
-          
-          echo "✅ Estructura de plugin válida encontrada"
+          echo "✅ El archivo es un ZIP válido"
 
       - name: Subir plugin como artefacto
         uses: actions/upload-artifact@v4
