@@ -1,0 +1,55 @@
+name: Download JetBrains Plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_id:
+        description: 'ID del plugin en JetBrains Marketplace (ej. 6317 para Lombok)'
+        required: true
+        default: '6317'
+      plugin_name:
+        description: 'Nombre amigable del plugin (para el archivo, ej. lombok-plugin)'
+        required: true
+        default: 'lombok-plugin'
+
+jobs:
+  download-plugin:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Mostrar información del plugin
+        run: |
+          echo "Descargando plugin con ID: ${{ github.event.inputs.plugin_id }}"
+          echo "Nombre del plugin: ${{ github.event.inputs.plugin_name }}"
+
+      - name: Crear nombre de archivo seguro
+        id: filename
+        run: |
+          SAFE_NAME=$(echo "${{ github.event.inputs.plugin_name }}" | sed 's/[^a-zA-Z0-9_-]/_/g')
+          FILE_NAME="${SAFE_NAME}.zip"
+          echo "filename=$FILE_NAME" >> $GITHUB_OUTPUT
+          echo "base_name=$SAFE_NAME" >> $GITHUB_OUTPUT
+
+      - name: Descargar plugin desde JetBrains Marketplace
+        run: |
+          PLUGIN_ID='${{ github.event.inputs.plugin_id }}'
+          OUTPUT_FILE='${{ steps.filename.outputs.filename }}'
+          DOWNLOAD_URL="https://plugins.jetbrains.com/pluginManager/?action=download&id=$PLUGIN_ID&uuid=$(date +%s)"
+
+          echo "Descargando desde: $DOWNLOAD_URL"
+          curl -L -o "$OUTPUT_FILE" "$DOWNLOAD_URL" --fail
+
+          if [ $? -ne 0 ]; then
+            echo "❌ Falló la descarga del plugin ID $PLUGIN_ID"
+            exit 1
+          fi
+
+          echo "✅ Plugin descargado como $OUTPUT_FILE"
+          ls -lh "$OUTPUT_FILE"
+
+      - name: Subir plugin como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.filename.outputs.base_name }}
+          path: ${{ steps.filename.outputs.filename }}
+          retention-days: 7
