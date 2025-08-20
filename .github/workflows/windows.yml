@@ -1,0 +1,64 @@
+name: Download Windows Installer from Direct Link
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_url:
+        description: 'Enlace directo de descarga del instalador (ej. .exe, .msi)'
+        required: true
+        default: 'https://example.com/installer.exe'
+      installer_name:
+        description: 'Nombre amigable para el archivo (ej. my-windows-app)'
+        required: true
+        default: 'windows-installer'
+
+jobs:
+  download-installer:
+    runs-on: windows-latest  # Usamos Windows porque es más natural para .exe/.msi
+
+    steps:
+      - name: Mostrar información de descarga
+        run: |
+          echo "Descargando instalador desde: ${{ github.event.inputs.download_url }}"
+          echo "Nombre del instalador: ${{ github.event.inputs.installer_name }}"
+
+      - name: Crear nombre de archivo seguro
+        id: filename
+        run: |
+          $SAFE_NAME = ($env:INPUT_INSTALLER_NAME -replace '[^a-zA-Z0-9_-]', '_')
+          $FILE_NAME = "${SAFE_NAME}$($env:DOWNLOAD_URL -match '\.(exe|msi|zip)$' ? '.' + $matches[1] : '.exe')"
+          echo "filename=$FILE_NAME" >> $env:GITHUB_OUTPUT
+          echo "base_name=$SAFE_NAME" >> $env:GITHUB_OUTPUT
+        env:
+          INPUT_INSTALLER_NAME: ${{ github.event.inputs.installer_name }}
+          DOWNLOAD_URL: ${{ github.event.inputs.download_url }}
+
+      - name: Descargar instalador de Windows
+        run: |
+          $url = "${{ github.event.inputs.download_url }}"
+          $output = "${{ steps.filename.outputs.filename }}"
+          echo "Descargando desde: $url"
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $output -ErrorAction Stop -MaximumRetryCount 3 -TimeoutSec 30
+            echo "✅ Descarga completada: $output"
+            Get-Item $output | Format-List Name, Length, LastWriteTime
+          } catch {
+            echo "❌ Error al descargar: $($_.Exception.Message)"
+            exit 1
+          }
+
+      - name: Verificar que el archivo existe y no está vacío
+        run: |
+          $file = Get-Item ${{ steps.filename.outputs.filename }}
+          if ($file.Length -eq 0) {
+            echo "❌ El archivo descargado está vacío"
+            exit 1
+          }
+          echo "✅ El archivo es válido y tiene tamaño: $($file.Length) bytes"
+
+      - name: Subir instalador como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.filename.outputs.base_name }}
+          path: ${{ steps.filename.outputs.filename }}
+          retention-days: 7
